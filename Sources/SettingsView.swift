@@ -98,6 +98,8 @@ struct GeneralSettingsView: View {
     @State private var keyValidationSuccess = false
     @State private var customVocabularyInput: String = ""
     @State private var micPermissionGranted = false
+    @State private var useCustomRecordingLimit = false
+    @State private var customRecordingLimitInput: String = ""
     @StateObject private var githubCache = GitHubMetadataCache.shared
     @ObservedObject private var updateManager = UpdateManager.shared
     private let freeflowRepoURL = URL(string: "https://github.com/zachlatta/freeflow")!
@@ -240,6 +242,9 @@ struct GeneralSettingsView: View {
                 SettingsCard("Custom Vocabulary", icon: "text.book.closed.fill") {
                     vocabularySection
                 }
+                SettingsCard("Recording Limit", icon: "timer") {
+                    recordingLimitSection
+                }
                 SettingsCard("Permissions", icon: "lock.shield.fill") {
                     permissionsSection
                 }
@@ -250,6 +255,9 @@ struct GeneralSettingsView: View {
             apiKeyInput = appState.apiKey
             apiBaseURLInput = appState.apiBaseURL
             customVocabularyInput = appState.customVocabulary
+            let isCustom = appState.maxRecordingSeconds != AppState.defaultMaxRecordingSeconds
+            useCustomRecordingLimit = isCustom
+            customRecordingLimitInput = isCustom ? "\(appState.maxRecordingSeconds)" : ""
             checkMicPermission()
             appState.refreshLaunchAtLoginStatus()
             Task { await githubCache.fetchIfNeeded() }
@@ -578,6 +586,81 @@ struct GeneralSettingsView: View {
             Text("Separate entries with commas, new lines, or semicolons.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Recording Limit
+
+    private var recordingLimitSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Maximum recording duration before auto-stop.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                // Default option
+                HStack {
+                    Image(systemName: useCustomRecordingLimit ? "circle" : "checkmark.circle.fill")
+                        .foregroundColor(useCustomRecordingLimit ? .secondary : .accentColor)
+                    Text("Default (2 minutes)")
+                        .font(.body)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    useCustomRecordingLimit = false
+                    customRecordingLimitInput = ""
+                    appState.maxRecordingSeconds = AppState.defaultMaxRecordingSeconds
+                }
+
+                // Custom option
+                HStack {
+                    Image(systemName: useCustomRecordingLimit ? "checkmark.circle.fill" : "circle")
+                        .foregroundColor(useCustomRecordingLimit ? .accentColor : .secondary)
+                    Text("Custom")
+                        .font(.body)
+                    if useCustomRecordingLimit {
+                        TextField("seconds", text: $customRecordingLimitInput)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 70)
+                            .onChange(of: customRecordingLimitInput) { newValue in
+                                let filtered = newValue.filter { $0.isNumber }
+                                if filtered != newValue {
+                                    customRecordingLimitInput = filtered
+                                }
+                                if let value = Int(filtered), value >= 15, value <= 600 {
+                                    appState.maxRecordingSeconds = value
+                                }
+                            }
+                        Text("seconds")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    useCustomRecordingLimit = true
+                    if customRecordingLimitInput.isEmpty {
+                        customRecordingLimitInput = "\(appState.maxRecordingSeconds)"
+                    }
+                }
+            }
+
+            if useCustomRecordingLimit {
+                Text("Enter a value between 15 and 600 seconds.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Label {
+                Text("Longer recordings take more time to transcribe and may time out.")
+                    .font(.caption)
+            } icon: {
+                Image(systemName: "info.circle")
+                    .font(.caption)
+            }
+            .foregroundStyle(.secondary)
         }
     }
 

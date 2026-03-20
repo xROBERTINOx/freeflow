@@ -49,9 +49,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let customContextPromptLastModifiedStorageKey = "custom_context_prompt_last_modified"
     private let shortcutStartDelayStorageKey = "shortcut_start_delay"
     private let forceHTTP2TranscriptionStorageKey = "force_http2_transcription"
+    private let maxRecordingSecondsStorageKey = "max_recording_seconds"
     private let transcribingIndicatorDelay: TimeInterval = 1.0
     let maxPipelineHistoryCount = 20
-    let maxRecordingSeconds: Int = 120
+    static let defaultMaxRecordingSeconds: Int = 120
     private var recordingTimer: Timer?
 
     @Published var hasCompletedSetup: Bool {
@@ -143,6 +144,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    @Published var maxRecordingSeconds: Int {
+        didSet {
+            UserDefaults.standard.set(maxRecordingSeconds, forKey: maxRecordingSecondsStorageKey)
+        }
+    }
+
     @Published var isRecording = false
     @Published var isTranscribing = false
     @Published var lastTranscript: String = ""
@@ -211,6 +218,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let customContextPromptLastModified = UserDefaults.standard.string(forKey: customContextPromptLastModifiedStorageKey) ?? ""
         let shortcutStartDelay = max(0, UserDefaults.standard.double(forKey: shortcutStartDelayStorageKey))
         let forceHTTP2Transcription = UserDefaults.standard.bool(forKey: forceHTTP2TranscriptionStorageKey)
+        let storedMaxRecording = UserDefaults.standard.integer(forKey: maxRecordingSecondsStorageKey)
+        let maxRecordingSeconds = storedMaxRecording > 0 ? storedMaxRecording : Self.defaultMaxRecordingSeconds
         let initialAccessibility = AXIsProcessTrusted()
         let initialScreenCapturePermission = CGPreflightScreenCaptureAccess()
         var removedAudioFileNames: [String] = []
@@ -241,6 +250,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.customContextPromptLastModified = customContextPromptLastModified
         self.shortcutStartDelay = shortcutStartDelay
         self.forceHTTP2Transcription = forceHTTP2Transcription
+        self.maxRecordingSeconds = maxRecordingSeconds
         self.pipelineHistory = savedHistory
         self.hasAccessibility = initialAccessibility
         self.hasScreenRecordingPermission = initialScreenCapturePermission
