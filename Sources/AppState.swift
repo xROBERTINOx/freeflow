@@ -51,6 +51,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let forceHTTP2TranscriptionStorageKey = "force_http2_transcription"
     private let transcribingIndicatorDelay: TimeInterval = 1.0
     let maxPipelineHistoryCount = 20
+    let maxRecordingSeconds: Int = 120
+    private var recordingTimer: Timer?
 
     @Published var hasCompletedSetup: Bool {
         didSet {
@@ -785,6 +787,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         .sink { [weak self] level in
                             self?.overlayManager.updateAudioLevel(level)
                         }
+                    self.startRecordingTimer()
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -852,6 +855,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     }
 
     private func stopAndTranscribe() {
+        stopRecordingTimer()
         cancelPendingShortcutStart()
         shortcutSessionController.reset()
         activeRecordingTriggerMode = nil
@@ -1060,6 +1064,27 @@ final class AppState: ObservableObject, @unchecked Sendable {
         } catch {
             errorMessage = "Unable to save run history entry: \(error.localizedDescription)"
         }
+    }
+
+    private func startRecordingTimer() {
+        recordingTimer?.invalidate()
+        overlayManager.overlayState.elapsedSeconds = 0
+        overlayManager.overlayState.maxRecordingSeconds = maxRecordingSeconds
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.overlayManager.overlayState.elapsedSeconds += 1
+                if self.overlayManager.overlayState.elapsedSeconds >= self.maxRecordingSeconds {
+                    self.stopAndTranscribe()
+                }
+            }
+        }
+    }
+
+    private func stopRecordingTimer() {
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        overlayManager.overlayState.elapsedSeconds = 0
     }
 
     private func startContextCapture() {

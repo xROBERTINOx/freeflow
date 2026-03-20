@@ -7,6 +7,9 @@ final class RecordingOverlayState: ObservableObject {
     @Published var phase: OverlayPhase = .recording
     @Published var audioLevel: Float = 0.0
     @Published var recordingTriggerMode: RecordingTriggerMode = .hold
+    @Published var elapsedSeconds: Int = 0
+    /// Maximum recording duration in seconds (used for timer color warnings)
+    var maxRecordingSeconds: Int = 120
 }
 
 enum OverlayPhase {
@@ -58,7 +61,7 @@ private func makeNotchContent<V: View>(
 final class RecordingOverlayManager {
     private var overlayWindow: NSPanel?
     private var transcribingPanel: NSPanel?
-    private let overlayState = RecordingOverlayState()
+    let overlayState = RecordingOverlayState()
 
     var onStopButtonPressed: (() -> Void)?
 
@@ -226,7 +229,7 @@ final class RecordingOverlayManager {
     }
 
     private var overlayWidth: CGFloat {
-        let baseWidth: CGFloat = overlayState.phase == .recording && overlayState.recordingTriggerMode == .toggle ? 150 : 92
+        let baseWidth: CGFloat = overlayState.phase == .recording && overlayState.recordingTriggerMode == .toggle ? 190 : 130
         guard screenHasNotch else { return baseWidth }
         return max(notchWidth, baseWidth)
     }
@@ -388,6 +391,34 @@ struct InitializingDotsView: View {
     }
 }
 
+struct ElapsedTimerView: View {
+    let elapsedSeconds: Int
+    let maxSeconds: Int
+
+    private var timerColor: Color {
+        let remaining = maxSeconds - elapsedSeconds
+        if remaining <= 10 {
+            return .red
+        } else if remaining <= 30 {
+            return .yellow
+        }
+        return .white
+    }
+
+    private var formattedTime: String {
+        let minutes = elapsedSeconds / 60
+        let seconds = elapsedSeconds % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    var body: some View {
+        Text(formattedTime)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundColor(timerColor)
+            .animation(.easeInOut(duration: 0.3), value: timerColor)
+    }
+}
+
 struct RecordingOverlayView: View {
     @ObservedObject var state: RecordingOverlayState
     let onStopButtonPressed: () -> Void
@@ -399,8 +430,14 @@ struct RecordingOverlayView: View {
                     InitializingDotsView()
                         .transition(.opacity)
                 } else {
-                    WaveformView(audioLevel: state.audioLevel)
-                        .transition(.opacity)
+                    HStack(spacing: 6) {
+                        WaveformView(audioLevel: state.audioLevel)
+                        ElapsedTimerView(
+                            elapsedSeconds: state.elapsedSeconds,
+                            maxSeconds: state.maxRecordingSeconds
+                        )
+                    }
+                    .transition(.opacity)
                 }
             }
 
