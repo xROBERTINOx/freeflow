@@ -228,8 +228,14 @@ struct GeneralSettingsView: View {
                 SettingsCard("Updates", icon: "arrow.triangle.2.circlepath") {
                     updatesSection
                 }
+                SettingsCard("API Provider", icon: "server.rack") {
+                    providerSection
+                }
                 SettingsCard("API Key", icon: "key.fill") {
                     apiKeySection
+                }
+                SettingsCard("Models", icon: "cpu") {
+                    modelSection
                 }
                 SettingsCard("Dictation Shortcuts", icon: "keyboard.fill") {
                     hotkeySection
@@ -394,16 +400,70 @@ struct GeneralSettingsView: View {
         }
     }
 
+    // MARK: API Provider
+
+    private var providerSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Provider", selection: $appState.selectedProvider) {
+                ForEach(APIProvider.allCases) { provider in
+                    Text(provider.displayName).tag(provider)
+                }
+            }
+            .onChange(of: appState.selectedProvider) { _ in
+                apiKeyInput = appState.apiKey
+                apiBaseURLInput = appState.apiBaseURL
+                keyValidationError = nil
+                keyValidationSuccess = false
+            }
+
+            if appState.selectedProvider == .custom {
+                Divider()
+
+                Text("Custom API Base URL")
+                    .font(.caption.weight(.semibold))
+
+                Text("Enter the base URL of your OpenAI-compatible API provider.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    TextField("https://api.example.com/v1", text: $apiBaseURLInput)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                        .onChange(of: apiBaseURLInput) { newValue in
+                            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !trimmed.isEmpty {
+                                appState.apiBaseURL = trimmed
+                            }
+                        }
+                }
+            }
+
+            if let url = appState.selectedProvider.keyInstructionURL {
+                HStack(spacing: 4) {
+                    Image(systemName: "link")
+                        .font(.caption2)
+                    Button(appState.selectedProvider.keyInstructionDisplayURL) {
+                        openURL(url)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.blue)
+                    .font(.caption)
+                }
+            }
+        }
+    }
+
     // MARK: API Key
 
     private var apiKeySection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("FreeFlow uses Groq's whisper-large-v3 model for transcription.")
+            Text("Enter your \(appState.selectedProvider.displayName) API key for transcription and post-processing.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
-                SecureField("Enter your Groq API key", text: $apiKeyInput)
+                SecureField(appState.selectedProvider.apiKeyPlaceholder, text: $apiKeyInput)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                     .disabled(isValidatingKey)
@@ -430,33 +490,6 @@ struct GeneralSettingsView: View {
 
             Divider()
 
-            Text("API Base URL")
-                .font(.caption.weight(.semibold))
-
-            Text("Change this to use a different OpenAI-compatible API provider.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 8) {
-                TextField("https://api.groq.com/openai/v1", text: $apiBaseURLInput)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-                    .onChange(of: apiBaseURLInput) { newValue in
-                        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmed.isEmpty {
-                            appState.apiBaseURL = trimmed
-                        }
-                    }
-
-                Button("Reset to Default") {
-                    apiBaseURLInput = "https://api.groq.com/openai/v1"
-                    appState.apiBaseURL = "https://api.groq.com/openai/v1"
-                }
-                .font(.caption)
-            }
-
-            Divider()
-
             Toggle(isOn: $appState.forceHTTP2Transcription) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Force HTTP/2 for Transcription")
@@ -470,15 +503,115 @@ struct GeneralSettingsView: View {
         }
     }
 
+    // MARK: Models
+
+    private var modelSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Transcription Model")
+                    .font(.caption.weight(.semibold))
+
+                ForEach(appState.selectedProvider.availableTranscriptionModels + [.customPlaceholder]) { model in
+                    Button {
+                        appState.selectedTranscriptionModel = model
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: appState.selectedTranscriptionModel == model ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(appState.selectedTranscriptionModel == model ? .blue : .secondary)
+                                .font(.caption)
+                                .padding(.top, 1)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(model.displayName)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                if !model.description.isEmpty && !model.isCustom {
+                                    Text(model.description)
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 3)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if appState.selectedTranscriptionModel.isCustom {
+                    TextField("Enter model ID (e.g. whisper-large-v3)", text: $appState.customTranscriptionModelID)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.caption, design: .monospaced))
+                }
+
+                if !appState.selectedTranscriptionModel.isCustom {
+                    Text("Model ID: \(appState.selectedTranscriptionModel.id)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Chat / Post-Processing Model")
+                    .font(.caption.weight(.semibold))
+
+                Text("Used for context analysis and cleaning up transcriptions.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(appState.selectedProvider.availableChatModels + [.customPlaceholder]) { model in
+                    Button {
+                        appState.selectedChatModel = model
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: appState.selectedChatModel == model ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(appState.selectedChatModel == model ? .blue : .secondary)
+                                .font(.caption)
+                                .padding(.top, 1)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(model.displayName)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                if !model.description.isEmpty && !model.isCustom {
+                                    Text(model.description)
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 3)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if appState.selectedChatModel.isCustom {
+                    TextField("Enter model ID (e.g. gpt-4o-mini)", text: $appState.customChatModelID)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.caption, design: .monospaced))
+                }
+
+                if !appState.selectedChatModel.isCustom {
+                    Text("Model ID: \(appState.selectedChatModel.id)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
     private func validateAndSaveKey() {
         let key = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseURL = apiBaseURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = appState.apiBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         isValidatingKey = true
         keyValidationError = nil
         keyValidationSuccess = false
 
         Task {
-            let valid = await TranscriptionService.validateAPIKey(key, baseURL: baseURL.isEmpty ? "https://api.groq.com/openai/v1" : baseURL)
+            let valid = await TranscriptionService.validateAPIKey(key, baseURL: baseURL.isEmpty ? appState.selectedProvider.defaultBaseURL : baseURL)
             await MainActor.run {
                 isValidatingKey = false
                 if valid {
@@ -1354,7 +1487,7 @@ struct RunLogEntryView: View {
                             title: "Transcribe Audio",
                             content: {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("Sent audio to Groq whisper-large-v3")
+                                    Text("Sent audio to \(appState.selectedProvider.displayName) \(appState.selectedTranscriptionModel.id)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .textSelection(.enabled)

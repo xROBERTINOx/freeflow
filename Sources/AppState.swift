@@ -35,7 +35,9 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 }
 
 final class AppState: ObservableObject, @unchecked Sendable {
-    private let apiKeyStorageKey = "groq_api_key"
+    private let selectedProviderStorageKey = "selected_provider"
+    private let selectedTranscriptionModelStorageKey = "selected_transcription_model"
+    private let selectedChatModelStorageKey = "selected_chat_model"
     private let apiBaseURLStorageKey = "api_base_url"
     private let holdShortcutStorageKey = "hold_shortcut"
     private let toggleShortcutStorageKey = "toggle_shortcut"
@@ -58,17 +60,78 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    @Published var selectedProvider: APIProvider {
+        didSet {
+            UserDefaults.standard.set(selectedProvider.rawValue, forKey: selectedProviderStorageKey)
+            apiKey = Self.loadStoredAPIKey(account: selectedProvider.apiKeyStorageKey)
+            if selectedProvider != .custom {
+                apiBaseURL = selectedProvider.defaultBaseURL
+            }
+            // Reset models to provider defaults
+            selectedTranscriptionModel = selectedProvider.defaultTranscriptionModel
+            selectedChatModel = selectedProvider.defaultChatModel
+            rebuildContextService()
+        }
+    }
+
+    @Published var selectedTranscriptionModel: TranscriptionModel {
+        didSet {
+            if let data = try? JSONEncoder().encode(selectedTranscriptionModel) {
+                UserDefaults.standard.set(data, forKey: selectedTranscriptionModelStorageKey)
+            }
+        }
+    }
+
+    @Published var selectedChatModel: ChatModel {
+        didSet {
+            if let data = try? JSONEncoder().encode(selectedChatModel) {
+                UserDefaults.standard.set(data, forKey: selectedChatModelStorageKey)
+            }
+            rebuildContextService()
+        }
+    }
+
+    @Published var customTranscriptionModelID: String {
+        didSet {
+            UserDefaults.standard.set(customTranscriptionModelID, forKey: "custom_transcription_model_id")
+        }
+    }
+
+    @Published var customChatModelID: String {
+        didSet {
+            UserDefaults.standard.set(customChatModelID, forKey: "custom_chat_model_id")
+        }
+    }
+
+    /// Returns the effective transcription model ID, accounting for custom model entry.
+    var effectiveTranscriptionModelID: String {
+        if selectedTranscriptionModel.isCustom {
+            let trimmed = customTranscriptionModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "whisper-large-v3" : trimmed
+        }
+        return selectedTranscriptionModel.id
+    }
+
+    /// Returns the effective chat model ID, accounting for custom model entry.
+    var effectiveChatModelID: String {
+        if selectedChatModel.isCustom {
+            let trimmed = customChatModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "meta-llama/llama-4-scout-17b-16e-instruct" : trimmed
+        }
+        return selectedChatModel.id
+    }
+
     @Published var apiKey: String {
         didSet {
             persistAPIKey(apiKey)
-            contextService = AppContextService(apiKey: apiKey, baseURL: apiBaseURL, customContextPrompt: customContextPrompt)
+            rebuildContextService()
         }
     }
 
     @Published var apiBaseURL: String {
         didSet {
             persistAPIBaseURL(apiBaseURL)
-            contextService = AppContextService(apiKey: apiKey, baseURL: apiBaseURL, customContextPrompt: customContextPrompt)
+            rebuildContextService()
         }
     }
 
@@ -113,7 +176,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published var customContextPrompt: String {
         didSet {
             UserDefaults.standard.set(customContextPrompt, forKey: customContextPromptStorageKey)
-            contextService = AppContextService(apiKey: apiKey, baseURL: apiBaseURL, customContextPrompt: customContextPrompt)
+            rebuildContextService()
         }
     }
 
@@ -192,8 +255,32 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     init() {
         let hasCompletedSetup = UserDefaults.standard.bool(forKey: "hasCompletedSetup")
-        let apiKey = Self.loadStoredAPIKey(account: apiKeyStorageKey)
-        let apiBaseURL = Self.loadStoredAPIBaseURL(account: "api_base_url")
+        let selectedProvider = APIProvider(rawValue: UserDefaults.standard.string(forKey: "selected_provider") ?? "") ?? .groq
+        let apiKey = Self.loadStoredAPIKey(account: selectedProvider.apiKeyStorageKey)
+        let apiBaseURL: String
+        if selectedProvider == .custom {
+            apiBaseURL = Self.loadStoredAPIBaseURL(account: "api_base_url")
+        } else {
+            apiBaseURL = selectedProvider.defaultBaseURL
+        }
+        let selectedTranscriptionModel: TranscriptionModel
+        if let data = UserDefaults.standard.data(forKey: "selected_transcription_model"),
+           let model = try? JSONDecoder().decode(TranscriptionModel.self, from: data),
+           model.isCustom || selectedProvider.availableTranscriptionModels.contains(where: { $0.id == model.id }) {
+            selectedTranscriptionModel = model
+        } else {
+            selectedTranscriptionModel = selectedProvider.defaultTranscriptionModel
+        }
+        let selectedChatModel: ChatModel
+        if let data = UserDefaults.standard.data(forKey: "selected_chat_model"),
+           let model = try? JSONDecoder().decode(ChatModel.self, from: data),
+           model.isCustom || selectedProvider.availableChatModels.contains(where: { $0.id == model.id }) {
+            selectedChatModel = model
+        } else {
+            selectedChatModel = selectedProvider.defaultChatModel
+        }
+        let customTranscriptionModelID = UserDefaults.standard.string(forKey: "custom_transcription_model_id") ?? ""
+        let customChatModelID = UserDefaults.standard.string(forKey: "custom_chat_model_id") ?? ""
         let shortcuts = Self.loadShortcutConfiguration(
             holdKey: holdShortcutStorageKey,
             toggleKey: toggleShortcutStorageKey
@@ -224,8 +311,21 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
         let selectedMicrophoneID = UserDefaults.standard.string(forKey: selectedMicrophoneStorageKey) ?? "default"
 
-        self.contextService = AppContextService(apiKey: apiKey, baseURL: apiBaseURL, customContextPrompt: customContextPrompt)
+        // Compute effective model IDs before self is fully initialized
+        let effectiveTranscriptionID = selectedTranscriptionModel.isCustom
+            ? (customTranscriptionModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "whisper-large-v3" : customTranscriptionModelID)
+            : selectedTranscriptionModel.id
+        let effectiveChatID = selectedChatModel.isCustom
+            ? (customChatModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "meta-llama/llama-4-scout-17b-16e-instruct" : customChatModelID)
+            : selectedChatModel.id
+        _ = effectiveTranscriptionID // used later in service creation
+        self.contextService = AppContextService(apiKey: apiKey, baseURL: apiBaseURL, chatModel: effectiveChatID, visionModel: effectiveChatID, customContextPrompt: customContextPrompt)
         self.hasCompletedSetup = hasCompletedSetup
+        self.selectedProvider = selectedProvider
+        self.selectedTranscriptionModel = selectedTranscriptionModel
+        self.selectedChatModel = selectedChatModel
+        self.customTranscriptionModelID = customTranscriptionModelID
+        self.customChatModelID = customChatModelID
         self.apiKey = apiKey
         self.apiBaseURL = apiBaseURL
         self.holdShortcut = shortcuts.hold
@@ -292,10 +392,20 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private func persistAPIKey(_ value: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            AppSettingsStorage.delete(account: apiKeyStorageKey)
+            AppSettingsStorage.delete(account: selectedProvider.apiKeyStorageKey)
         } else {
-            AppSettingsStorage.save(trimmed, account: apiKeyStorageKey)
+            AppSettingsStorage.save(trimmed, account: selectedProvider.apiKeyStorageKey)
         }
+    }
+
+    private func rebuildContextService() {
+        contextService = AppContextService(
+            apiKey: apiKey,
+            baseURL: apiBaseURL,
+            chatModel: effectiveChatModelID,
+            visionModel: effectiveChatModelID,
+            customContextPrompt: customContextPrompt
+        )
     }
 
     private static let defaultAPIBaseURL = "https://api.groq.com/openai/v1"
@@ -904,9 +1014,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let transcriptionService = TranscriptionService(
             apiKey: apiKey,
             baseURL: apiBaseURL,
-            forceHTTP2: forceHTTP2Transcription
+            forceHTTP2: forceHTTP2Transcription,
+            transcriptionModel: effectiveTranscriptionModelID
         )
-        let postProcessingService = PostProcessingService(apiKey: apiKey, baseURL: apiBaseURL)
+        let postProcessingService = PostProcessingService(apiKey: apiKey, baseURL: apiBaseURL, chatModel: effectiveChatModelID)
 
         Task {
             do {

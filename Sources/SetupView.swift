@@ -11,7 +11,9 @@ struct SetupView: View {
     private let freeflowRepoURL = URL(string: "https://github.com/zachlatta/freeflow")!
     private enum SetupStep: Int, CaseIterable {
         case welcome = 0
+        case provider
         case apiKey
+        case modelSelection
         case micPermission
         case accessibility
         case screenRecording
@@ -155,8 +157,12 @@ struct SetupView: View {
         switch currentStep {
         case .welcome:
             welcomeStep
+        case .provider:
+            providerStep
         case .apiKey:
             apiKeyStep
+        case .modelSelection:
+            modelSelectionStep
         case .micPermission:
             micPermissionStep
         case .accessibility:
@@ -304,36 +310,38 @@ struct SetupView: View {
                 .font(.system(size: 60))
                 .foregroundStyle(.blue)
 
-            Text("Groq API Key")
+            Text("\(appState.selectedProvider.displayName) API Key")
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("FreeFlow uses Groq for fast, high-accuracy transcription.")
+            Text("FreeFlow uses \(appState.selectedProvider.displayName) for transcription and post-processing.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("How to get a free API key:")
-                        .font(.subheadline.weight(.semibold))
-                    VStack(alignment: .leading, spacing: 2) {
-                        instructionRow(number: "1", text: "Go to [console.groq.com/keys](https://console.groq.com/keys)")
-                        instructionRow(number: "2", text: "Create a free account (if you don't have one)")
-                        instructionRow(number: "3", text: "Click **Create API Key** and copy it")
+                if let url = appState.selectedProvider.keyInstructionURL {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("How to get an API key:")
+                            .font(.subheadline.weight(.semibold))
+                        VStack(alignment: .leading, spacing: 2) {
+                            instructionRow(number: "1", text: "Go to [\(appState.selectedProvider.keyInstructionDisplayURL)](\(url.absoluteString))")
+                            instructionRow(number: "2", text: "Create an account (if you don't have one)")
+                            instructionRow(number: "3", text: "Click **Create API Key** and copy it")
+                        }
                     }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.blue.opacity(0.06))
+                    )
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.blue.opacity(0.06))
-                )
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("API Key")
                         .font(.headline)
-                    SecureField("Paste your Groq API key", text: $apiKeyInput)
+                    SecureField(appState.selectedProvider.apiKeyPlaceholder, text: $apiKeyInput)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
                         .disabled(isValidatingKey)
@@ -347,8 +355,180 @@ struct SetupView: View {
                             .font(.caption)
                     }
                 }
+
+                if appState.selectedProvider == .custom {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("API Base URL")
+                            .font(.headline)
+                        TextField("https://api.example.com/v1", text: Binding(
+                            get: { appState.apiBaseURL },
+                            set: { appState.apiBaseURL = $0 }
+                        ))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                }
             }
 
+        }
+    }
+
+    var providerStep: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "server.rack")
+                .font(.system(size: 60))
+                .foregroundStyle(.blue)
+
+            Text("API Provider")
+                .font(.title)
+                .fontWeight(.bold)
+
+            Text("Choose which API provider to use for\ntranscription and post-processing.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 8) {
+                ForEach(APIProvider.allCases) { provider in
+                    Button {
+                        appState.selectedProvider = provider
+                        apiKeyInput = appState.apiKey
+                    } label: {
+                        HStack {
+                            Image(systemName: appState.selectedProvider == provider ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(appState.selectedProvider == provider ? .blue : .secondary)
+                            Text(provider.displayName)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(appState.selectedProvider == provider ? Color.blue.opacity(0.1) : Color.clear)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(appState.selectedProvider == provider ? Color.blue.opacity(0.4) : Color.primary.opacity(0.1), lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    var modelSelectionStep: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "cpu")
+                .font(.system(size: 60))
+                .foregroundStyle(.blue)
+
+            Text("Choose Models")
+                .font(.title)
+                .fontWeight(.bold)
+
+            Text("Select which models to use. Defaults work great for most users.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Transcription Model")
+                        .font(.subheadline.weight(.semibold))
+
+                    VStack(spacing: 4) {
+                        ForEach(appState.selectedProvider.availableTranscriptionModels + [.customPlaceholder]) { model in
+                            Button {
+                                appState.selectedTranscriptionModel = model
+                            } label: {
+                                HStack(alignment: .top) {
+                                    Image(systemName: appState.selectedTranscriptionModel == model ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(appState.selectedTranscriptionModel == model ? .blue : .secondary)
+                                        .padding(.top, 2)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(model.displayName)
+                                            .foregroundStyle(.primary)
+                                            .font(.subheadline.weight(.medium))
+                                        if !model.description.isEmpty {
+                                            Text(model.description)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(appState.selectedTranscriptionModel == model ? Color.blue.opacity(0.08) : Color.clear)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        if appState.selectedTranscriptionModel.isCustom {
+                            TextField("Enter model ID", text: $appState.customTranscriptionModelID)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.caption, design: .monospaced))
+                                .padding(.horizontal, 12)
+                        }
+                    }
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Chat / Post-Processing Model")
+                        .font(.subheadline.weight(.semibold))
+
+                    VStack(spacing: 4) {
+                        ForEach(appState.selectedProvider.availableChatModels + [.customPlaceholder]) { model in
+                            Button {
+                                appState.selectedChatModel = model
+                            } label: {
+                                HStack(alignment: .top) {
+                                    Image(systemName: appState.selectedChatModel == model ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(appState.selectedChatModel == model ? .blue : .secondary)
+                                        .padding(.top, 2)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(model.displayName)
+                                            .foregroundStyle(.primary)
+                                            .font(.subheadline.weight(.medium))
+                                        if !model.description.isEmpty {
+                                            Text(model.description)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(appState.selectedChatModel == model ? Color.blue.opacity(0.08) : Color.clear)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        if appState.selectedChatModel.isCustom {
+                            TextField("Enter model ID", text: $appState.customChatModelID)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.caption, design: .monospaced))
+                                .padding(.horizontal, 12)
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.04))
+            )
         }
     }
 

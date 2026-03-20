@@ -8,15 +8,16 @@ class TranscriptionService {
     private let apiKey: String
     private let baseURL: String
     private let forceHTTP2: Bool
-    private let transcriptionModel = "whisper-large-v3"
+    private let transcriptionModel: String
     private let transcriptionTimeoutSeconds: TimeInterval = 20
     private let uploadSampleRate = 16_000.0
     private let uploadChannelCount: AVAudioChannelCount = 1
 
-    init(apiKey: String, baseURL: String = "https://api.groq.com/openai/v1", forceHTTP2: Bool = false) {
+    init(apiKey: String, baseURL: String = "https://api.groq.com/openai/v1", forceHTTP2: Bool = false, transcriptionModel: String = "whisper-large-v3") {
         self.apiKey = apiKey
         self.baseURL = baseURL
         self.forceHTTP2 = forceHTTP2
+        self.transcriptionModel = transcriptionModel
     }
 
     // Validate API key by hitting a lightweight endpoint
